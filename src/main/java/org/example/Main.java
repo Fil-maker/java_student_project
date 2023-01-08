@@ -1,35 +1,24 @@
 package org.example;
-
-import com.opencsv.CSVReader;
-import com.opencsv.exceptions.CsvValidationException;
-
-import java.io.FileReader;
+import org.jfree.data.category.DefaultCategoryDataset;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.sql.*;
 
 
 public class Main {
-    public static void main(String[] args) throws ClassNotFoundException {
-        Class.forName("org.sqlite.JDBC");
-
-        Connection connection = null;
+    private static Connection connection = null;
+    private static Statement statement;
+    public static void main(String[] args){
         try {
-            // create a database connection
-            connection = DriverManager.getConnection("jdbc:sqlite:countries.sqlite");
-            Statement statement = connection.createStatement();
-            statement.setQueryTimeout(30);  // set timeout to 30 sec.
+//             parse csv file to db sqlite
+            CsvParser parser = new CsvParser();
+            parser.csvToSql("src/main/resources/Country.csv");
+            statement = parser.statement;
+            connection = parser.connection;
 
-            createTables(statement);
-            printCsv(statement, "src/main/resources/Country.csv");
-//            ResultSet rs = statement.executeQuery("select * from person");
-//            while(rs.next())
-//            {
-            // read the result set
-//                System.out.println("name = " + rs.getString("name"));
-//                System.out.println("id = " + rs.getInt("id"));
-//            }
-        } catch (SQLException e) {
+            taskOne();
+            taskTwo();
+            taskThree();
+        } catch (SQLException | IOException | ClassNotFoundException e) {
             // if the error message is "out of memory",
             // it probably means no database file is found
             System.err.println(e.getMessage());
@@ -43,43 +32,24 @@ public class Main {
             }
         }
     }
-//    src/main/resources/Country.csv
-
-    private static void createTables(Statement statement) throws SQLException {
-        statement.executeUpdate("create table if not exists regions(id integer primary key, name string unique)");
-        statement.executeUpdate("create table if not exists sub_regions(id integer primary key, name string unique, region_id integer, foreign key (region_id) references region(id))");
-        statement.executeUpdate("create table if not exists city_stat(id integer primary key, name string unique, internet_users integer, population integer, sub_region_id integer, foreign key (sub_region_id) references sub_region(id))");
+    private static void taskOne() throws SQLException, IOException {
+        ResultSet rs = statement.executeQuery("select sr.name, round((100.0 * sum(internet_users) / sum(population)), 2) as 'part' from city_stat join sub_regions sr on sr.id = city_stat.sub_region_id group by sub_region_id order by 1.0 * sum(internet_users) / sum(population) desc");
+        DefaultCategoryDataset dataset = new DefaultCategoryDataset();
+        while (rs.next()) {
+            dataset.setValue(rs.getDouble("part"), "процент пользователей интернета в регионе", rs.getString("name"));
+        }
+        new BarChart(dataset).launch();
     }
-
-    private static void insertData(Statement statement, String[] data) throws SQLException {
-        statement.executeUpdate(String.format("insert or ignore into regions (name) values ('%s')", data[2]));
-        statement.executeUpdate(String.format("insert or ignore into sub_regions (name, region_id) values ('%s', (select id from regions where regions.name = '%s'))", data[1], data[2]));
-        int users, population;
-        users = Integer.parseInt(data[3].replace(",",""));
-        population = Integer.parseInt(data[4].replace(",",""));
-        statement.executeUpdate(String.format("insert or ignore into city_stat (name, sub_region_id, internet_users, population) values ('%s', (select id from sub_regions where sub_regions.name = '%s'), %d, %d)", data[0].replace("'", ""), data[1], users, population));
+    private static void taskTwo() throws SQLException {
+        ResultSet rs = statement.executeQuery("select city_stat.name, min(internet_users) as users from  city_stat join sub_regions sr on sr.id = city_stat.sub_region_id where sr.name = 'Western Europe' group by sr.name");
+        System.out.println(String.format("Город в Восточной Европе с наименьшим кол-вом зарегистрированных в ин-ете: %s (%d)",
+                rs.getString("name"), rs.getInt("users")));
     }
-
-    public static void printCsv(Statement statement, String path) {
-        try {
-            FileReader fileReader = new FileReader(path, StandardCharsets.UTF_8);
-            CSVReader csvReader = new CSVReader(fileReader);
-            String[] nextLine;
-            boolean header = false;
-            int c = 0;
-            while ((nextLine = csvReader.readNext()) != null) {
-                if (!header) {
-                    header = true;
-                    continue;
-                }
-                System.out.println(c);
-                System.out.println(nextLine[0]);
-                insertData(statement, nextLine);
-                c++;
-            }
-        } catch (IOException | CsvValidationException | SQLException e) {
-            throw new RuntimeException(e);
+    private static void taskThree() throws SQLException {
+        ResultSet rs = statement.executeQuery("select name, round((100.0 * internet_users / city_stat.population), 2) as part from city_stat where round(1.0 * internet_users / city_stat.population, 2) between 0.75 and 0.85");
+        System.out.println("Страны, процент зарегистрированных в интернете пользователей которых находится в промежутке от 75% до 85%");
+        while (rs.next()){
+            System.out.println(String.format("%s %d%%", rs.getString("name"), rs.getInt("part")));
         }
     }
-
 }
